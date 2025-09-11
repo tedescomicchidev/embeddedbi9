@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "identity_client_api": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7039",
+      "launchBrowser": false
+    }
+  }
+}
