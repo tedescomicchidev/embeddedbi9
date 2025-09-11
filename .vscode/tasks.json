@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build web",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/identity-client-web-app/identity-client-web-app.csproj",
+        "-c",
+        "Debug"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "func host start (identity-client-api)",
+      "type": "shell",
+      "command": "func start",
+      "options": {
+        "cwd": "${workspaceFolder}/src/identity-client-api"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": {
+            "regexp": ".*",
+            "file": 1,
+            "location": 2,
+            "message": 0
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*Hosting environment:.*",
+            "endsPattern": ".*Worker process started and initialized.*"
+          }
+        }
+      ]
+    }
+  ]
+}

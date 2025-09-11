@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Azure Functions (identity-client-api)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "func: host start (identity-client-api)",
+      "program": "/usr/bin/dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/identity-client-api/identity-client-api.csproj"
+      ],
+      "cwd": "${workspaceFolder}/src/identity-client-api",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "Attach to Azure Functions (.NET)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}

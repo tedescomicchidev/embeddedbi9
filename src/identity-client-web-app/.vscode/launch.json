@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug identity-client-web-app",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/identity-client-web-app/bin/Debug/net8.0/identity-client-web-app.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/identity-client-web-app",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Now listening on: (https?://\\S+)"
+      },
+      "dotnetRunMessages": true,
+      "justMyCode": true
+    }
+  ]
+}

@@ -1,3 +1,11 @@
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Authorization;
+using Microsoft.Identity.Web;
+using Microsoft.Identity.Web.UI;
+using System.IdentityModel.Tokens.Jwt;
+using identity_client_web_app.Services;
+
 namespace identity_client_web_app;
 
 public class Program
@@ -8,6 +16,28 @@ public class Program
 
         // Add services to the container.
         builder.Services.AddControllersWithViews();
+
+        // This is required to be instantiated before the OpenIdConnectOptions starts getting configured.
+        // By default, the claims mapping will map claim names in the old format to accommodate older SAML applications.
+        // This flag ensures that the ClaimsIdentity claims collection will be built from the claims in the token
+        JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
+
+        // Sign-in users with the Microsoft identity platform
+        builder.Services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApp(builder.Configuration)
+            .EnableTokenAcquisitionToCallDownstreamApi()
+            .AddInMemoryTokenCaches();
+
+        builder.Services.AddControllersWithViews(options =>
+        {
+            var policy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
+            options.Filters.Add(new AuthorizeFilter(policy));
+        }).AddMicrosoftIdentityUI();
+
+        builder.Services.AddHttpClient();
+        builder.Services.AddScoped<IEmbedService, EmbedService>();
 
         var app = builder.Build();
 
@@ -23,7 +53,7 @@ public class Program
         app.UseStaticFiles();
 
         app.UseRouting();
-
+        app.UseAuthentication();
         app.UseAuthorization();
 
         app.MapControllerRoute(

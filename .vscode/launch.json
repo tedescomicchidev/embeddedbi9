@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Web: identity-client-web-app",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build web",
+      "program": "${workspaceFolder}/src/identity-client-web-app/bin/Debug/net8.0/identity-client-web-app.dll",
+      "cwd": "${workspaceFolder}/src/identity-client-web-app",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Now listening on: (https?://\\S+)"
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "Functions: Start host",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "func host start (identity-client-api)",
+      "program": "func",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}/src/identity-client-api",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Functions: Attach",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Start Web + Functions",
+      "configurations": [
+        "Functions: Start host",
+        "Web: identity-client-web-app"
+      ]
+    }
+  ]
+}
