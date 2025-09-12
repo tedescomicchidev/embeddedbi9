@@ -17,29 +17,38 @@
       },
       "justMyCode": true
     },
+    // Start only the Functions host task (background). Then use the attach config below.
     {
-      "name": "Functions: Start host",
+      "name": "Functions: Start Host Task",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "func host start (identity-client-api)",
-      "program": "func",
-      "args": ["start"],
+      "program": "${workspaceFolder}/src/identity-client-api/bin/Debug/net8.0/identity-client-api.dll",
       "cwd": "${workspaceFolder}/src/identity-client-api",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
+      "env": {
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true"
+      },
+      "stopAtEntry": false,
+      "justMyCode": true
     },
     {
       "name": "Functions: Attach",
       "type": "coreclr",
       "request": "attach",
       "processId": "${command:pickProcess}"
+    },
+    {
+      "name": "Attach to .NET Functions",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:azureFunctions.pickProcess}"
     }
   ],
   "compounds": [
     {
-      "name": "Start Web + Functions",
+      "name": "Start Web + Functions Host",
       "configurations": [
-        "Functions: Start host",
+        "Functions: Start Host Task",
         "Web: identity-client-web-app"
       ]
     }

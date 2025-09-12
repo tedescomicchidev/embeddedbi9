@@ -71,6 +71,29 @@ dotnet run
 ```
 7. Navigate to https://localhost:5001 (or shown port), sign in, enter Workspace & Report Ids, embed.
 
+### Debugging (VS Code)
+Launch configurations provided:
+
+- `Functions: Start Host Task` – starts the Azure Functions host via the background task `func host start (identity-client-api)`. This launches the host; breakpoints may not bind until symbols load.
+- `Functions: Attach` – attach manually to a running Functions host (use this after starting host if breakpoints did not bind automatically).
+- `Web: identity-client-web-app` – launches the MVC app.
+- Compound: `Start Web + Functions Host` – starts the Functions host task and the web app in sequence.
+
+Recommended workflow for debugging function code:
+1. Put breakpoints in `GetEmbedToken.cs`.
+2. Start the compound `Start Web + Functions Host`.
+3. If a breakpoint does not hit, run `Functions: Attach` and pick the `dotnet` process hosting the function.
+4. Invoke the endpoint (submit form in the web UI) to trigger breakpoint.
+
+If you prefer a single-step attach experience, you can remove the host task config and rely solely on `func start` launched manually in a terminal, then use `Functions: Attach`.
+
+#### Local Function over HTTP
+The Azure Functions Core Tools host serves locally over HTTP (http://localhost:7071). Attempting to call it via HTTPS without configuring a reverse proxy or certificate will produce SSL handshake errors like:
+```
+Cannot determine the frame size or a corrupted frame was received.
+```
+The appsettings now use `http://localhost:7071` for `FunctionApi:BaseUrl`. The `EmbedService` contains a safeguard that, if you intentionally point to `https://localhost:7071` and an SSL failure occurs, it retries automatically over HTTP for developer convenience.
+
 ### Deployment with azd
 1. Login: `azd auth login`
 2. Initialize: `azd init` (accept existing).
