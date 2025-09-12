@@ -1,0 +1,15 @@
+name: identity-embed-solution
+metadata:
+  template: custom-powerbi-embed
+services:
+  web:
+    project: ./src/identity-client-web-app
+    language: csharp
+    host: appservice
+  api:
+    project: ./src/identity-client-api
+    language: csharp
+    host: function
+infra:
+  provider: bicep
+  path: ./infra

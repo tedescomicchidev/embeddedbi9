@@ -3,6 +3,76 @@
 }
 
 <div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+    <h1 class="display-4">Power BI Embed Demo</h1>
+    <form id="embedForm" class="mb-3">
+        <div class="row mb-2">
+            <div class="col">
+                <input class="form-control" name="workspaceId" placeholder="Workspace Id" required />
+            </div>
+            <div class="col">
+                <input class="form-control" name="reportId" placeholder="Report Id" required />
+            </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Get Embed Token & Embed</button>
+    </form>
+    <div id="status" class="text-start small"></div>
+    <div id="reportContainer" style="height:700px;border:1px solid #ccc"></div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/powerbi-client@2.23.1/dist/powerbi.min.js"></script>
+<script>
+    (function() {
+        const form = document.getElementById('embedForm');
+        const status = document.getElementById('status');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            status.textContent = 'Requesting geolocation...';
+            let location = 'unknown';
+            try {
+                const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
+                location = pos.coords.latitude.toFixed(2) + ',' + pos.coords.longitude.toFixed(2);
+            } catch { status.textContent = 'Geolocation denied, using unknown'; }
+            const fd = new FormData(form);
+            const workspaceId = fd.get('workspaceId');
+            const reportId = fd.get('reportId');
+
+            status.textContent = 'Requesting embed token...';
+            try {
+                const userNameEl = document.querySelector('#userName');
+                const username = userNameEl ? userNameEl.textContent : 'anonymous';
+                const body = {
+                    workspaceId,
+                    reportId,
+                    username,
+                    groups: [],
+                    userLocation: location
+                };
+                const resp = await fetch('/EmbedToken', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const data = await resp.json();
+                if (!resp.ok || data.error) {
+                    status.textContent = 'Error: ' + (data.error || resp.statusText);
+                    return;
+                }
+                status.textContent = 'Token acquired, embedding...';
+                embedReport(workspaceId, reportId, data.embedToken);
+            } catch (err) {
+                status.textContent = 'Request failed: ' + err;
+            }
+        });
+
+        function embedReport(workspaceId, reportId, token) {
+            const models = window['powerbi-client'].models;
+            const config = {
+                type: 'report',
+                tokenType: models.TokenType.Embed,
+                accessToken: token,
+                embedUrl: `https://app.powerbi.com/reportEmbed?reportId=${reportId}&groupId=${workspaceId}`,
+                id: reportId,
+                settings: { panes: { filters: { visible: false }, pageNavigation: { visible: true } } }
+            };
+            const container = document.getElementById('reportContainer');
+            powerbi.reset(container);
+            powerbi.embed(container, config);
+        }
+    })();
+</script>

@@ -8,6 +8,7 @@
     <PackageReference Include="Azure.Identity" Version="1.16.0" />
     <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="4.6.0" />
     <PackageReference Include="Microsoft.PowerBI.Api" Version="4.22.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.21.1" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">
