@@ -18,6 +18,18 @@
       }
     },
     {
+      "label": "build function",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/identity-client-api/identity-client-api.csproj",
+        "-c",
+        "Debug"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
       "label": "func host start (identity-client-api)",
       "type": "shell",
       "command": "func start",
@@ -35,11 +47,21 @@
           },
           "background": {
             "activeOnStart": true,
-            "beginsPattern": ".*Hosting environment:.*",
-            "endsPattern": ".*Worker process started and initialized.*"
+            "beginsPattern": "^.*Building host.*$",
+            "endsPattern": "^.*Functions:.*GetEmbedToken.*$"
           }
         }
       ]
+    },
+    {
+      "type": "func",
+      "dependsOn": "build (functions)",
+      "options": {
+        "cwd": "${workspaceFolder}/bin/Debug/net8.0"
+      },
+      "command": "host start",
+      "isBackground": true,
+      "problemMatcher": "$func-dotnet-watch"
     }
   ]
 }

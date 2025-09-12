@@ -30,10 +30,26 @@ public class HomeController : Controller
     }
 
     [HttpPost("/EmbedToken")]
-    public async Task<IActionResult> GetEmbedToken([FromBody] EmbedTokenRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetEmbedToken([FromBody] EmbedTokenClientRequest request, CancellationToken cancellationToken)
     {
         if (request is null) return BadRequest();
-        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, request.Username, request.Groups, request.UserLocation, cancellationToken);
+
+        // Derive username from claims (prefer UPN, then email, then name identifier)
+        var principal = User;
+        string username = principal.FindFirst("upn")?.Value
+            ?? principal.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
+            ?? principal.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+            ?? principal.Identity?.Name
+            ?? "unknown";
+
+        // Collect group claims (Azure AD may emit 'groups' claim or roles) – standard OID: http://schemas.microsoft.com/ws/2008/06/identity/claims/groups
+        var groupClaims = principal.Claims
+            .Where(c => c.Type == "groups" || c.Type == System.Security.Claims.ClaimTypes.GroupSid || c.Type == System.Security.Claims.ClaimTypes.Role)
+            .Select(c => c.Value)
+            .Distinct()
+            .ToList();
+
+        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, request.UserLocation, cancellationToken);
         if (!string.IsNullOrEmpty(resp.Error))
         {
             return StatusCode(500, resp);

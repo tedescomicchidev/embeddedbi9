@@ -24,13 +24,21 @@
     (function() {
         const form = document.getElementById('embedForm');
         const status = document.getElementById('status');
+        // Note: Username and groups are no longer sent from the client. They are derived server-side
+        // from authenticated user claims for integrity; only workspace/report/location are posted.
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             status.textContent = 'Requesting geolocation...';
             let location = 'unknown';
             try {
                 const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
-                location = pos.coords.latitude.toFixed(2) + ',' + pos.coords.longitude.toFixed(2);
+                const { latitude, longitude } = pos.coords;
+                const countryCode = await reverseGeocodeCountryCode(latitude, longitude);
+                if (countryCode) {
+                    location = countryCode;
+                } else {
+                    location = 'unknown';
+                }
             } catch { status.textContent = 'Geolocation denied, using unknown'; }
             const fd = new FormData(form);
             const workspaceId = fd.get('workspaceId');
@@ -38,13 +46,9 @@
 
             status.textContent = 'Requesting embed token...';
             try {
-                const userNameEl = document.querySelector('#userName');
-                const username = userNameEl ? userNameEl.textContent : 'anonymous';
                 const body = {
                     workspaceId,
                     reportId,
-                    username,
-                    groups: [],
                     userLocation: location
                 };
                 const resp = await fetch('/EmbedToken', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -73,6 +77,20 @@
             const container = document.getElementById('reportContainer');
             powerbi.reset(container);
             powerbi.embed(container, config);
+        }
+        async function reverseGeocodeCountryCode(lat, lon) {
+            try {
+                const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}` , {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                // Nominatim may include ISO codes under address components
+                const iso2 = data?.address?.country_code; // lower-case iso2
+                return iso2 ? iso2.toUpperCase() : null;
+            } catch {
+                return null;
+            }
         }
     })();
 </script>
