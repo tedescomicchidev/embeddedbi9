@@ -1,15 +1,110 @@
-mkdir infra
-mkdir src
-cd src
+## Power BI Embedded Sample (Web App + Azure Function)
+
+This repository contains:
+
+- ASP.NET Core MVC web app (`identity-client-web-app`) authenticating users via Microsoft Entra ID and embedding a Power BI report using an embed token.
+- Azure Functions app (`identity-client-api`) exposing an endpoint to generate Power BI embed tokens after validating user + location against a CSV stored in Blob Storage.
+- Bicep infrastructure (`infra/`) and `azure.yaml` to support Azure Developer CLI (`azd`) deployments.
+
+### High-Level Flow
+1. User signs into web app (OpenID Connect via Microsoft.Identity.Web).
+2. User enters Workspace Id and Report Id; browser captures approximate geolocation (or 'unknown').
+3. Web app posts to its own `/EmbedToken` endpoint which calls the Azure Function.
+4. Function validates `Username` + `UserLocation` against `user_locations.csv` in the `data` container.
+5. If authorized, function uses service principal credentials to call Power BI REST API and generate an embed token.
+6. Web app embeds the report using Power BI JavaScript SDK.
+
+### Projects
+| Project | Purpose |
+|---------|---------|
+| `src/identity-client-web-app` | MVC app + auth + embedding UI |
+| `src/identity-client-api` | Azure Function generating embed tokens |
+| `infra/` | Bicep templates (App Service, Function, Storage, Key Vault, App Insights) |
+
+### Prerequisites
+- .NET 8 SDK
+- Azure Functions Core Tools
+- Azure CLI + Azure Developer CLI (`azd`)
+- Azurite (local storage emulator) or real Azure Storage
+- A Power BI workspace, report, and a service principal with access (plus tenant admin enabled service principal usage for Power BI)
+
+### Configuration (Environment Variables)
+Function expects:
+```
+PBI_TENANT_ID
+PBI_CLIENT_ID
+PBI_CLIENT_SECRET
+USER_CSV_CONTAINER=data
+USER_CSV_FILENAME=user_locations.csv
+```
+
+Web app uses:
+```
+FunctionApi:BaseUrl (appsettings or environment)
+AzureAd (standard Microsoft.Identity.Web settings)
+```
+
+### Local Development
+1. Start Azurite (if using emulator):
+```bash
+npx azurite --location ./azurite --debug ./azurite/debug.log
+```
+2. Ensure `local.settings.json` in function has `UseDevelopmentStorage=true`.
+3. Upload CSV (Azurite) using Azure Storage Explorer or Azurite REST:
+	- Create container `data`
+	- Upload `data/user_locations.csv`
+4. Set environment variables (Power BI service principal creds). For bash:
+```bash
+export PBI_TENANT_ID=YOUR_TENANT_ID
+export PBI_CLIENT_ID=YOUR_CLIENT_ID
+export PBI_CLIENT_SECRET=YOUR_CLIENT_SECRET
+```
+5. Run function:
+```bash
+cd src/identity-client-api
+func start
+```
+6. Run web app:
+```bash
+cd ../identity-client-web-app
+dotnet run
+```
+7. Navigate to https://localhost:5001 (or shown port), sign in, enter Workspace & Report Ids, embed.
+
+### Deployment with azd
+1. Login: `azd auth login`
+2. Initialize: `azd init` (accept existing).
+3. Provision + Deploy: `azd up -e dev` (provide required parameters). You can parameterize through `azd env set` or interactive prompts.
+
+### CSV Authorization Logic
+`user_locations.csv` lines formatted as:
+```
+userPrincipalName,countryOrLocation
+```
+Example:
+```
+alice@example.com,US
+```
+If the authenticated user's username and the location string provided from the browser match a line, an embed token is issued. Otherwise 403.
+
+### Power BI Considerations
+- Service principal must be granted workspace access.
+- Tenant setting "Allow service principals to use Power BI APIs" must be enabled.
+- Embed token supports the single report/dataset provided.
+
+### Security Notes
+- Client secret should be stored in Key Vault in production; current bicep sets a plain app setting for simplicity (improve by adding managed identity + Key Vault reference).
+- Geolocation is approximate and user controlled; consider server-side enrichment or IP-based location for stronger assurance.
+
+### Next Improvements
+- Add unit tests for function logic (CSV parsing, authorization).
+- Add caching for CSV lookups.
+- Replace plain secret with Key Vault reference + managed identity.
+- Support user groups filtering for RLS datasets.
+
+### Original Scaffolding Commands (for reference)
+```
 dotnet new mvc -n identity-client-web-app --use-program-main
-cd identity-client-web-app/
-dotnet add package Microsoft.Identity.Web.UI
-Install Func Core: https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local?tabs=linux%2Cisolated-process%2Cnode-v4%2Cpython-v2%2Chttp-trigger%2Ccontainer-apps&pivots=programming-language-csharp
 func init identity-client-api --worker-runtime dotnet --target-framework net8.0
-cd identity-client-api
 func new --name GetEmbedToken --template "HTTP trigger" --authlevel function
-dotnet add package Azure.Identity
-dotnet add package Microsoft.PowerBI.Api
-dotnet dev-certs https --trust
-dotnet dev-certs https --check --verbose
-dotnet dev-certs https -ep ./aspnetcore-dev-cert.pfx -p password
+```

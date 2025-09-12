@@ -3,6 +3,10 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# certificates
+certificate.key
+certificate.crt
+
 # static files
 **/wwwroot/lib
 

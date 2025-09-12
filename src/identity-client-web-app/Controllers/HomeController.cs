@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using Microsoft.AspNetCore.Mvc;
-using identity_client_web_app.Models;
+// removed duplicate usings
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using identity_client_web_app.Services;
@@ -28,6 +27,18 @@ public class HomeController : Controller
     public IActionResult Privacy()
     {
         return View();
+    }
+
+    [HttpPost("/EmbedToken")]
+    public async Task<IActionResult> GetEmbedToken([FromBody] EmbedTokenRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null) return BadRequest();
+        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, request.Username, request.Groups, request.UserLocation, cancellationToken);
+        if (!string.IsNullOrEmpty(resp.Error))
+        {
+            return StatusCode(500, resp);
+        }
+        return Ok(resp);
     }
 
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
