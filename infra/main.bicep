@@ -18,9 +18,7 @@ var addressSpace = '10.10.0.0/16'
 var appSubnetPrefix = '10.10.1.0/24'
 var privateEndpointsSubnetPrefix = '10.10.2.0/24'
 
-//
-// Virtual Network
-//
+// VNet with subnets
 resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: '${namePrefix}-vnet'
   location: location
@@ -29,7 +27,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
       addressPrefixes: [
         addressSpace
       ]
-    }
+  },
     subnets: [
       {
         name: 'apps'
@@ -59,9 +57,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
 var appSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'apps')
 var peSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'private-endpoints')
 
-//
-// App Service Plan (Linux)
-//
+// App Service Plan
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
@@ -75,9 +71,7 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-//
-// Storage Account (private only)
-//
+// Storage (private access only)
 resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageName
   location: location
@@ -93,9 +87,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-//
-// Application Insights
-//
+// App Insights
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
@@ -105,9 +97,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-//
 // Key Vault
-//
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: kvName
   location: location
@@ -134,16 +124,17 @@ resource pbiClientSecretSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = 
 
 var pbiClientSecretUri = pbiClientSecretSecret.properties.secretUriWithVersion
 
-// Build storage connection string (Functions require connection string)
+// Storage connection string (removed environment().suffixes.storage)
 var storageKey = storage.listKeys().keys[0].value
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storageKey};EndpointSuffix=${environment().suffixes.storage}'
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storageKey};EndpointSuffix=core.windows.net'
 
-//
 // Web App
-//
 resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   name: webAppName
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
@@ -167,32 +158,22 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
           value: 'https://${functionAppName}.azurewebsites.net'
         }
       ]
-      // Optional: Restrict inbound (uncomment after private endpoint verified)
-      /*
-      ipSecurityRestrictions: [
-        {
-          name: 'DenyAll'
-          description: 'Deny all public inbound'
-          action: 'Deny'
-          ipAddress: 'Any'
-          priority: 200
-        }
-      ]
-      */
     }
   }
-  identity: {
-    type: 'SystemAssigned'
-  }
+  dependsOn: [
+    plan
+    appInsights
+  ]
 }
 
-//
 // Function App
-//
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
   kind: 'functionapp,linux'
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
@@ -237,39 +218,26 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: '0'
         }
       ]
-      // Optional: add same deny rule after confirming private endpoint resolution.
-      /*
-      ipSecurityRestrictions: [
-        {
-          name: 'DenyAll'
-          description: 'Deny all public inbound'
-          action: 'Deny'
-          ipAddress: 'Any'
-          priority: 200
-        }
-      ]
-      */
     }
   }
-  identity: {
-    type: 'SystemAssigned'
-  }
+  dependsOn: [
+    storage
+    plan
+    appInsights
+    pbiClientSecretSecret
+  ]
+}
+
+// Blob container
+resource dataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: '${storage.name}/default/data'
+  properties: {}
   dependsOn: [
     storage
   ]
 }
 
-//
-// Blob Container for CSV
-//
-resource dataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  name: '${storage.name}/default/data'
-  properties: {}
-}
-
-//
-// Key Vault access policy for Function managed identity
-//
+// Key Vault access policy
 resource kvPolicies 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
   name: '${kv.name}/add'
   properties: {
@@ -292,9 +260,7 @@ resource kvPolicies 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
   ]
 }
 
-//
-// Private DNS Zones
-//
+// Private DNS zones
 resource dnsZoneWeb 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.azurewebsites.net'
   location: 'global'
@@ -335,9 +301,7 @@ resource dnsLinkBlob 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
   ]
 }
 
-//
 // Private Endpoint: Function
-//
 resource peFunction 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   name: '${namePrefix}-pe-func'
   location: location
@@ -383,9 +347,7 @@ resource peFunctionDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@
   ]
 }
 
-//
 // Private Endpoint: Storage (Blob)
-//
 resource peStorageBlob 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   name: '${namePrefix}-pe-storblob'
   location: location
@@ -431,11 +393,11 @@ resource peStorageBlobDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGrou
   ]
 }
 
-//
 // Outputs
-//
-output webAppUrl string = webApp.properties.defaultHostName
-output functionUrl string = functionApp.properties.defaultHostName
+output webAppHostname string = webApp.properties.defaultHostName
+output functionHostname string = functionApp.properties.defaultHostName
+output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
+output functionUrl string = 'https://${functionApp.properties.defaultHostName}'
 output vnetId string = vnet.id
 output functionPrivateEndpointId string = peFunction.id
 output storageBlobPrivateEndpointId string = peStorageBlob.id
