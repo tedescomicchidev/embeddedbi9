@@ -1,5 +1,6 @@
 param location string = resourceGroup().location
-param environment string = 'dev'
+// Removed unused environment label to avoid clash with environment() intrinsic
+// param environment string = 'dev'
 param namePrefix string
 
 @description('Service principal client id for Power BI service principal')
@@ -12,11 +13,16 @@ var webAppName = '${namePrefix}-web'
 var functionAppName = '${namePrefix}-func'
 var storageName = toLower(replace('${namePrefix}stor','-',''))
 var planName = '${namePrefix}-plan'
-var appInsightsName = '${namePrefix}-ai'
-var kvName = '${namePrefix}-kv'
+// Application Insights removed (provider not registered). If re-added, restore variable and resource.
+// Key Vault name: allow override; default makes it globally unique & <=24 chars (alphanumeric only)
+@minLength(3)
+@maxLength(24)
+param keyVaultName string = toLower(replace(substring('${namePrefix}kv${uniqueString(subscription().id, resourceGroup().id)}', 0, 24), '-', ''))
 var addressSpace = '10.10.0.0/16'
 var appSubnetPrefix = '10.10.1.0/24'
 var privateEndpointsSubnetPrefix = '10.10.2.0/24'
+// Private DNS zone for blob constructed from current cloud suffix
+var blobPrivateLinkZone = 'privatelink.blob.${az.environment().suffixes.storage}'
 
 // VNet with subnets
 resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
@@ -27,13 +33,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
       addressPrefixes: [
         addressSpace
       ]
-  },
+    }
     subnets: [
       {
         name: 'apps'
         properties: {
           addressPrefix: appSubnetPrefix
-          delegation: [
+          delegations: [
             {
               name: 'webdelegation'
               properties: {
@@ -42,7 +48,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
             }
           ]
         }
-      },
+      }
       {
         name: 'private-endpoints'
         properties: {
@@ -54,6 +60,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   }
 }
 
+// App subnet id (used for Web App regional VNet integration)
 var appSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'apps')
 var peSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'private-endpoints')
 
@@ -62,8 +69,8 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
   sku: {
-    name: 'B1'
-    tier: 'Basic'
+    name: 'S1'
+    tier: 'Standard'
   }
   kind: 'linux'
   properties: {
@@ -87,19 +94,11 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-// App Insights
-resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: appInsightsName
-  location: location
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-  }
-}
+// (Application Insights intentionally removed)
 
 // Key Vault
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: kvName
+  name: keyVaultName
   location: location
   properties: {
     tenantId: subscription().tenantId
@@ -113,20 +112,16 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 resource pbiClientSecretSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  name: '${kv.name}/PBI-Client-Secret'
+  name: 'PBI-Client-Secret'
+  parent: kv
   properties: {
     value: pbiClientSecret
   }
-  dependsOn: [
-    kv
-  ]
 }
 
-var pbiClientSecretUri = pbiClientSecretSecret.properties.secretUriWithVersion
-
-// Storage connection string (removed environment().suffixes.storage)
-var storageKey = storage.listKeys().keys[0].value
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storageKey};EndpointSuffix=core.windows.net'
+// (Removed use of storage account key for Functions runtime; shifting to managed identity binding)
+// Key Vault secret URI (no version) used for app setting reference (avoid hardcoded host)
+var pbiClientSecretUri = '${kv.properties.vaultUri}secrets/PBI-Client-Secret'
 
 // Web App
 resource webApp 'Microsoft.Web/sites@2023-12-01' = {
@@ -138,32 +133,27 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
+    // Integrate Web App with delegated subnet so it can resolve private endpoints
+    virtualNetworkSubnetId: appSubnetId
     siteConfig: {
-      virtualNetworkSubnetId: appSubnetId
+      vnetRouteAllEnabled: true
       appSettings: [
-        {
-          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-          value: appInsights.properties.ConnectionString
-        },
         {
           name: 'PBI_CLIENT_ID'
           value: pbiClientId
-        },
+        }
         {
           name: 'PBI_TENANT_ID'
           value: pbiTenantId
-        },
+        }
         {
           name: 'FUNCTION_API_BASE_URL'
-          value: 'https://${functionAppName}.azurewebsites.net'
+          // Use private link FQDN so call stays on private network
+          value: 'https://${functionAppName}.privatelink.azurewebsites.net'
         }
       ]
     }
   }
-  dependsOn: [
-    plan
-    appInsights
-  ]
 }
 
 // Function App
@@ -176,43 +166,78 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   }
   properties: {
     serverFarmId: plan.id
+    // Disable public ingress; only private endpoint (and VNet-integrated callers) can reach it
+    publicNetworkAccess: 'Disabled'
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'DOTNET|8.0'
-      virtualNetworkSubnetId: appSubnetId
+      // Optional hard lock: deny all IPs (portal may show as restrictive). You can later add specific rules if needed.
+      ipSecurityRestrictions: [
+        {
+          name: 'DenyAll'
+          // Removed ';' to satisfy API validation (no semicolons or commas allowed in description)
+          description: 'Block all public traffic and rely on Private Endpoint'
+          action: 'Deny'
+          priority: 100
+          ipAddress: '0.0.0.0/0'
+        }
+      ]
       appSettings: [
+        // Identity-based storage (no key). The following settings instruct the Functions runtime
+        // to authenticate to the Storage Account using Managed Identity per
+        // https://learn.microsoft.com/azure/azure-functions/storage-considerations?tabs=azure-portal#configure-identity-based-connections
         {
-          name: 'AzureWebJobsStorage'
-          value: storageConnectionString
-        },
+          name: 'AzureWebJobsStorage__accountName'
+          value: storage.name
+        }
         {
-          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-          value: appInsights.properties.ConnectionString
-        },
+          name: 'AzureWebJobsStorage__blobServiceUri'
+          value: 'https://${storage.name}.blob.${az.environment().suffixes.storage}'
+        }
+        {
+          name: 'AzureWebJobsStorage__queueServiceUri'
+          value: 'https://${storage.name}.queue.${az.environment().suffixes.storage}'
+        }
+        {
+          name: 'AzureWebJobsStorage__tableServiceUri'
+          value: 'https://${storage.name}.table.${az.environment().suffixes.storage}'
+        }
+        {
+          name: 'AzureWebJobsStorage__blobServiceUri__credential'
+          value: 'managedidentity'
+        }
+        {
+          name: 'AzureWebJobsStorage__queueServiceUri__credential'
+          value: 'managedidentity'
+        }
+        {
+          name: 'AzureWebJobsStorage__tableServiceUri__credential'
+          value: 'managedidentity'
+        }
         {
           name: 'PBI_CLIENT_ID'
           value: pbiClientId
-        },
+        }
         {
           name: 'PBI_TENANT_ID'
           value: pbiTenantId
-        },
+        }
         {
           name: 'PBI_CLIENT_SECRET'
           value: '@Microsoft.KeyVault(SecretUri=${pbiClientSecretUri})'
-        },
+        }
         {
           name: 'USER_CSV_CONTAINER'
           value: 'data'
-        },
+        }
         {
           name: 'USER_CSV_FILENAME'
           value: 'user_locations.csv'
-        },
+        }
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
-        },
+        }
         {
           name: 'WEBSITE_RUN_FROM_PACKAGE'
           value: '0'
@@ -220,26 +245,20 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       ]
     }
   }
-  dependsOn: [
-    storage
-    plan
-    appInsights
-    pbiClientSecretSecret
-  ]
+  dependsOn: [ pbiClientSecretSecret ]
 }
 
 // Blob container
 resource dataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   name: '${storage.name}/default/data'
   properties: {}
-  dependsOn: [
-    storage
-  ]
+  // dependsOn removed (implicit via parent resource reference)
 }
 
 // Key Vault access policy
 resource kvPolicies 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
-  name: '${kv.name}/add'
+  name: 'add'
+  parent: kv
   properties: {
     accessPolicies: [
       {
@@ -254,10 +273,7 @@ resource kvPolicies 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
       }
     ]
   }
-  dependsOn: [
-    functionApp
-    kv
-  ]
+  // dependsOn removed (implicit via principalId reference)
 }
 
 // Private DNS zones
@@ -267,12 +283,13 @@ resource dnsZoneWeb 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 }
 
 resource dnsZoneBlob 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.blob.core.windows.net'
+  name: blobPrivateLinkZone
   location: 'global'
 }
 
 resource dnsLinkWeb 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  name: '${dnsZoneWeb.name}/${namePrefix}-link-web'
+  name: '${namePrefix}-link-web'
+  parent: dnsZoneWeb
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -280,14 +297,11 @@ resource dnsLinkWeb 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-
     }
     registrationEnabled: false
   }
-  dependsOn: [
-    dnsZoneWeb
-    vnet
-  ]
 }
 
 resource dnsLinkBlob 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  name: '${dnsZoneBlob.name}/${namePrefix}-link-blob'
+  name: '${namePrefix}-link-blob'
+  parent: dnsZoneBlob
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -295,10 +309,6 @@ resource dnsLinkBlob 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
     }
     registrationEnabled: false
   }
-  dependsOn: [
-    dnsZoneBlob
-    vnet
-  ]
 }
 
 // Private Endpoint: Function
@@ -322,14 +332,12 @@ resource peFunction 'Microsoft.Network/privateEndpoints@2023-09-01' = {
       }
     ]
   }
-  dependsOn: [
-    functionApp
-    vnet
-  ]
+  // dependsOn removed (implicit via references)
 }
 
 resource peFunctionDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
-  name: '${peFunction.name}/default'
+  name: 'default'
+  parent: peFunction
   properties: {
     privateDnsZoneConfigs: [
       {
@@ -340,11 +348,6 @@ resource peFunctionDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@
       }
     ]
   }
-  dependsOn: [
-    peFunction
-    dnsZoneWeb
-    dnsLinkWeb
-  ]
 }
 
 // Private Endpoint: Storage (Blob)
@@ -368,14 +371,35 @@ resource peStorageBlob 'Microsoft.Network/privateEndpoints@2023-09-01' = {
       }
     ]
   }
-  dependsOn: [
-    storage
-    vnet
-  ]
+  // dependsOn removed (implicit via references)
+}
+
+// RBAC: Grant Function App managed identity access to Storage (Blob & Queue Data Contributor)
+resource storageBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, storage.id, functionApp.name, 'blob-data')
+  scope: storage
+  properties: {
+    principalId: functionApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe') // Storage Blob Data Contributor
+    principalType: 'ServicePrincipal'
+  }
+  // implicit dependency via principalId reference
+}
+
+resource storageQueueDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, storage.id, functionApp.name, 'queue-data')
+  scope: storage
+  properties: {
+    principalId: functionApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88') // Storage Queue Data Contributor
+    principalType: 'ServicePrincipal'
+  }
+  // implicit dependency via principalId reference
 }
 
 resource peStorageBlobDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
-  name: '${peStorageBlob.name}/default'
+  name: 'default'
+  parent: peStorageBlob
   properties: {
     privateDnsZoneConfigs: [
       {
@@ -386,11 +410,6 @@ resource peStorageBlobDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGrou
       }
     ]
   }
-  dependsOn: [
-    peStorageBlob
-    dnsZoneBlob
-    dnsLinkBlob
-  ]
 }
 
 // Outputs
@@ -401,3 +420,4 @@ output functionUrl string = 'https://${functionApp.properties.defaultHostName}'
 output vnetId string = vnet.id
 output functionPrivateEndpointId string = peFunction.id
 output storageBlobPrivateEndpointId string = peStorageBlob.id
+output keyVaultDeployedName string = kv.name
