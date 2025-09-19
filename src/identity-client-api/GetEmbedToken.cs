@@ -105,8 +105,7 @@ public static class GetEmbedToken
             else
             {
                 // Try endpoint style
-                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri")
-                                ?? raw; // raw may itself be an endpoint URL
+                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri") ?? raw; // raw may itself be an endpoint URL
                 if (string.IsNullOrWhiteSpace(endpoint))
                 {
                     log.LogWarning("AzureWebJobsStorage not configured (neither connection string nor endpoint)");
@@ -124,6 +123,9 @@ public static class GetEmbedToken
                 var containerClient = new BlobContainerClient(containerUri, cred);
                 blobClient = containerClient.GetBlobClient(blobName);
             }
+
+            log.LogInformation("Checking authorization for user {user} at location {loc} using blob {blob}", username, location, blobClient.Uri);
+
             if (!await blobClient.ExistsAsync())
             {
                 log.LogWarning("User CSV blob not found: {blob}", blobName);
