@@ -94,7 +94,7 @@ public static class GetEmbedToken
             var blobName = Environment.GetEnvironmentVariable("USER_CSV_FILENAME") ?? "user_locations.csv";
 
             string mode;
-            if (!string.IsNullOrWhiteSpace(raw) && raw.Contains("AccountName=", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(raw)) // && raw.Contains("AccountName=", StringComparison.OrdinalIgnoreCase)
             {
                 mode = "ConnectionString";
                 log.LogDebug("[AuthZ] Using connection string storage access (container={container}, blob={blob})", containerName, blobName);
@@ -117,6 +117,16 @@ public static class GetEmbedToken
                 log.LogDebug("[AuthZ] Using managed identity endpoint mode (endpoint={endpoint}, container={container}, blob={blob})", serviceUri, containerName, blobName);
                 var containerUri = new Uri(serviceUri, containerName);
                 var cred = new ManagedIdentityCredential();
+                // Obtain an access token explicitly to log claims (appid, oid, tid) for troubleshooting which MI identity is used.
+                try
+                {
+                    var token = await cred.GetTokenAsync(new Azure.Core.TokenRequestContext(new[] { "https://storage.azure.com/.default" }));
+                    LogJwtClaims(token.Token, log);
+                }
+                catch (Exception tokenEx)
+                {
+                    log.LogWarning(tokenEx, "[AuthZ] Unable to acquire MSI token for claim logging (will still attempt blob access)");
+                }
                 var containerClient = new BlobContainerClient(containerUri, cred);
                 blobClient = containerClient.GetBlobClient(blobName);
             }
@@ -176,6 +186,27 @@ public static class GetEmbedToken
         }
     }
 
+    private static void LogJwtClaims(string jwt, ILogger log)
+    {
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return;
+            // Base64Url decode payload
+            var payload = parts[1];
+            var pad = (4 - payload.Length % 4) % 4;
+            if (pad > 0) payload = payload.PadRight(payload.Length + pad, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload.Replace('-', '+').Replace('_', '/')));
+            using var doc = JsonDocument.Parse(json);
+            string? Get(string k) => doc.RootElement.TryGetProperty(k, out var v) ? v.GetString() : null;
+            log.LogInformation("[AuthZ] MSI token claims: appid={appid} oid={oid} tid={tid}", Get("appid"), Get("oid"), Get("tid"));
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug(ex, "[AuthZ] Failed to parse MSI token claims");
+        }
+    }
+
     private static async Task<string?> AcquirePowerBiAccessTokenAsync(ILogger log)
     {
         try
@@ -188,6 +219,44 @@ public static class GetEmbedToken
                 log.LogWarning("Power BI service principal credentials not fully configured");
                 return null;
             }
+
+
+/*
+
+            var credentials = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            log.LogInformation($"Received request from credentials: {credentials}");
+
+            var token = await credentials.GetTokenAsync(new TokenRequestContext(new[] { "https://analysis.windows.net/powerbi/api/.default" }));
+            log.LogInformation($"Received request from token: {token.Token}");
+
+            var pbiClient = new PowerBIClient(new Uri("https://api.powerbi.com"), new TokenCredentials(token.Token));
+            log.LogInformation($"Received request from pbiClient: {pbiClient}");
+
+            // WHEREAMI-logic
+            // ...
+            // ...
+
+            // var tokenRequest = new GenerateTokenRequest(
+            //     accessLevel: "View",
+            //     identity: effectiveIdentity
+            // );
+            
+            // log.LogInformation($"Received request from tokenRequest.AccessLevel: {tokenRequest.AccessLevel}");
+
+            // var embedToken = await pbiClient.Reports.GenerateTokenInGroupAsync(new Guid(workspaceId), new Guid(reportId), tokenRequest);
+            var embedToken = await pbiClient.Reports.GenerateTokenInGroupAsync(new Guid(workspaceId), new Guid(reportId), new GenerateTokenRequest(accessLevel: "view"));
+            var report = await pbiClient.Reports.GetReportInGroupAsync(new Guid(workspaceId), new Guid(reportId));
+            
+            log.LogInformation($"Received request from embedToken: {embedToken}");
+
+            return new OkObjectResult(new {
+                Token = embedToken.Token,
+                Expiration = embedToken.Expiration,
+                EmbedURL = report.EmbedUrl
+            });
+
+*/
+
             var scopes = new[] { "https://analysis.windows.net/powerbi/api/.default" };
             var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
             var token = await credential.GetTokenAsync(new Azure.Core.TokenRequestContext(scopes));
