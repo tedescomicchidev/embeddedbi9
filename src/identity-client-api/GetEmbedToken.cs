@@ -26,7 +26,7 @@ public static class GetEmbedToken
 
     [FunctionName("GetEmbedToken")]
     public static async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "generateEmbedToken")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "generateEmbedToken")] HttpRequest req,
         ILogger log)
     {
         try
@@ -88,15 +88,40 @@ public static class GetEmbedToken
     {
         try
         {
-            var connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                log.LogWarning("AzureWebJobsStorage not configured");
-                return false;
-            }
+            var raw = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
             var containerName = Environment.GetEnvironmentVariable("USER_CSV_CONTAINER") ?? "data";
             var blobName = Environment.GetEnvironmentVariable("USER_CSV_FILENAME") ?? "user_locations.csv";
-            var blobClient = new BlobContainerClient(connectionString, containerName).GetBlobClient(blobName);
+
+            BlobClient blobClient;
+            if (!string.IsNullOrWhiteSpace(raw)) //&& raw.Contains("AccountName=", StringComparison.OrdinalIgnoreCase)
+            {
+                // Classic connection string
+                blobClient = new BlobContainerClient(raw, containerName).GetBlobClient(blobName);
+            }
+            else
+            {
+                // Try endpoint style
+                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri") ?? raw; // raw may itself be an endpoint URL
+                if (string.IsNullOrWhiteSpace(endpoint))
+                {
+                    log.LogWarning("AzureWebJobsStorage not configured (neither connection string nor endpoint)");
+                    return false;
+                }
+                if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var serviceUri))
+                {
+                    log.LogWarning("AzureWebJobsStorage endpoint value invalid: {value}", endpoint);
+                    return false;
+                }
+                // Build container client using service URI + container name with managed identity credential
+                // serviceUri could be e.g. https://<account>.blob.core.windows.net
+                var containerUri = new Uri(serviceUri, containerName);
+                var cred = new DefaultAzureCredential();
+                var containerClient = new BlobContainerClient(containerUri, cred);
+                blobClient = containerClient.GetBlobClient(blobName);
+            }
+
+            log.LogInformation("Checking authorization for user {user} at location {loc} using blob {blob}", username, location, blobClient.Uri);
+
             if (!await blobClient.ExistsAsync())
             {
                 log.LogWarning("User CSV blob not found: {blob}", blobName);
@@ -120,7 +145,7 @@ public static class GetEmbedToken
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Error validating user authorization");
+            log.LogError(ex, "Error validating user authorization. Msg: {msg}", ex.Message );
             return false;
         }
     }
