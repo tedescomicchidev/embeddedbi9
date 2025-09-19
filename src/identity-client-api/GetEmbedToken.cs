@@ -86,70 +86,92 @@ public static class GetEmbedToken
 
     private static async Task<bool> IsAuthorizedAsync(string username, string location, ILogger log)
     {
+        BlobClient? blobClient = null;
         try
         {
-            // Support both classic connection string and managed identity based configuration.
-            // 1. If AzureWebJobsStorage is a full connection string (contains AccountName=) use it directly.
-            // 2. Else look for AzureWebJobsStorage__blobServiceUri (Functions v4 MSI pattern) and build client with DefaultAzureCredential.
-            // 3. Back-compat: if AzureWebJobsStorage is just a blob service URI (starts with https://) also treat as endpoint.
             var raw = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
             var containerName = Environment.GetEnvironmentVariable("USER_CSV_CONTAINER") ?? "data";
             var blobName = Environment.GetEnvironmentVariable("USER_CSV_FILENAME") ?? "user_locations.csv";
 
-            BlobClient blobClient;
+            string mode;
             if (!string.IsNullOrWhiteSpace(raw) && raw.Contains("AccountName=", StringComparison.OrdinalIgnoreCase))
             {
-                // Classic connection string
-                blobClient = new BlobContainerClient(raw, containerName).GetBlobClient(blobName);
+                mode = "ConnectionString";
+                log.LogDebug("[AuthZ] Using connection string storage access (container={container}, blob={blob})", containerName, blobName);
+                blobClient = new BlobContainerClient(raw!, containerName).GetBlobClient(blobName);
             }
             else
             {
-                // Try endpoint style
-                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri") ?? raw; // raw may itself be an endpoint URL
+                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri") ?? raw;
                 if (string.IsNullOrWhiteSpace(endpoint))
                 {
-                    log.LogWarning("AzureWebJobsStorage not configured (neither connection string nor endpoint)");
+                    log.LogWarning("[AuthZ] Storage not configured (no connection string or endpoint)");
                     return false;
                 }
                 if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var serviceUri))
                 {
-                    log.LogWarning("AzureWebJobsStorage endpoint value invalid: {value}", endpoint);
+                    log.LogWarning("[AuthZ] Invalid endpoint for storage auth: {endpoint}", endpoint);
                     return false;
                 }
-                // Build container client using service URI + container name with managed identity credential
-                // serviceUri could be e.g. https://<account>.blob.core.windows.net
+                mode = "ManagedIdentity";
+                log.LogDebug("[AuthZ] Using managed identity endpoint mode (endpoint={endpoint}, container={container}, blob={blob})", serviceUri, containerName, blobName);
                 var containerUri = new Uri(serviceUri, containerName);
-                var cred = new DefaultAzureCredential();
+                var cred = new ManagedIdentityCredential();
                 var containerClient = new BlobContainerClient(containerUri, cred);
                 blobClient = containerClient.GetBlobClient(blobName);
             }
 
-            log.LogInformation("Checking authorization for user {user} at location {loc} using blob {blob}", username, location, blobClient.Uri);
+            log.LogInformation("[AuthZ] Checking authorization for user {user} at location {loc} (mode={mode}) using blob URI {uri}", username, location, mode, blobClient.Uri);
 
             if (!await blobClient.ExistsAsync())
             {
-                log.LogWarning("User CSV blob not found: {blob}", blobName);
+                log.LogWarning("[AuthZ] CSV blob not found: {blob} (uri={uri})", blobClient.Name, blobClient.Uri);
                 return false;
             }
+
+            log.LogDebug("[AuthZ] CSV blob exists. Beginning scan.");
             using var stream = await blobClient.OpenReadAsync();
             using var reader = new StreamReader(stream);
+            int lineNumber = 0;
+            int processed = 0;
             while (!reader.EndOfStream)
             {
                 var line = await reader.ReadLineAsync();
+                lineNumber++;
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 var parts = line.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 2) continue;
+                if (parts.Length < 2)
+                {
+                    log.LogTrace("[AuthZ] Skipping line {line} insufficient columns", lineNumber);
+                    continue;
+                }
+                processed++;
                 if (string.Equals(parts[0], username, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(parts[1], location, StringComparison.OrdinalIgnoreCase))
                 {
+                    log.LogInformation("[AuthZ] Authorized user {user} location {loc} (line {line})", username, location, lineNumber);
                     return true;
                 }
             }
+            log.LogInformation("[AuthZ] No match for user {user} location {loc}. Lines processed={processed}", username, location, processed);
+            return false;
+        }
+        catch (Azure.RequestFailedException rfe)
+        {
+            log.LogError(rfe, "[AuthZ] Storage request failed. Status={status} ErrorCode={code} Uri={uri}", rfe.Status, rfe.ErrorCode, blobClient?.Uri);
+
+
+            // Azure Storage–specific error information
+            Console.WriteLine($"Message: {rfe.Message}");
+            Console.WriteLine($"Status: {rfe.Status}");
+            Console.WriteLine($"ErrorCode: {rfe.ErrorCode}");
+
+
             return false;
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Error validating user authorization. Msg: {msg}", ex.Message );
+            log.LogError(ex, "[AuthZ] Unexpected error validating user authorization: {msg}", ex.Message);
             return false;
         }
     }
@@ -183,7 +205,6 @@ public static class GetEmbedToken
         try
         {
             using var client = new PowerBIClient(new Uri("https://api.powerbi.com/"), new TokenCredentials(powerBiAccessToken, "Bearer"));
-            // Get report to ensure it exists
             var report = await client.Reports.GetReportInGroupAsync(Guid.Parse(request.WorkspaceId), Guid.Parse(request.ReportId));
             var datasetId = report.DatasetId;
 
@@ -203,7 +224,6 @@ public static class GetEmbedToken
                 var exp = tokenResponse.Expiration;
                 if (exp != default)
                 {
-                    // tokenResponse.Expiration is DateTime? already or DateTime; ensure UTC
                     expOffset = DateTime.SpecifyKind(exp, DateTimeKind.Utc);
                 }
             }
