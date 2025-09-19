@@ -86,124 +86,42 @@ public static class GetEmbedToken
 
     private static async Task<bool> IsAuthorizedAsync(string username, string location, ILogger log)
     {
-        BlobClient? blobClient = null;
         try
         {
-            var raw = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-            var containerName = Environment.GetEnvironmentVariable("USER_CSV_CONTAINER") ?? "data";
-            var blobName = Environment.GetEnvironmentVariable("USER_CSV_FILENAME") ?? "user_locations.csv";
-
-            string mode;
-            if (!string.IsNullOrWhiteSpace(raw)) // && raw.Contains("AccountName=", StringComparison.OrdinalIgnoreCase)
+            var connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
+            if (string.IsNullOrWhiteSpace(connectionString))
             {
-                mode = "ConnectionString";
-                log.LogDebug("[AuthZ] Using connection string storage access (container={container}, blob={blob})", containerName, blobName);
-                blobClient = new BlobContainerClient(raw!, containerName).GetBlobClient(blobName);
-            }
-            else
-            {
-                var endpoint = Environment.GetEnvironmentVariable("AzureWebJobsStorage__blobServiceUri") ?? raw;
-                if (string.IsNullOrWhiteSpace(endpoint))
-                {
-                    log.LogWarning("[AuthZ] Storage not configured (no connection string or endpoint)");
-                    return false;
-                }
-                if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var serviceUri))
-                {
-                    log.LogWarning("[AuthZ] Invalid endpoint for storage auth: {endpoint}", endpoint);
-                    return false;
-                }
-                mode = "ManagedIdentity";
-                log.LogDebug("[AuthZ] Using managed identity endpoint mode (endpoint={endpoint}, container={container}, blob={blob})", serviceUri, containerName, blobName);
-                var containerUri = new Uri(serviceUri, containerName);
-                var cred = new ManagedIdentityCredential();
-                // Obtain an access token explicitly to log claims (appid, oid, tid) for troubleshooting which MI identity is used.
-                try
-                {
-                    var token = await cred.GetTokenAsync(new Azure.Core.TokenRequestContext(new[] { "https://storage.azure.com/.default" }));
-                    LogJwtClaims(token.Token, log);
-                }
-                catch (Exception tokenEx)
-                {
-                    log.LogWarning(tokenEx, "[AuthZ] Unable to acquire MSI token for claim logging (will still attempt blob access)");
-                }
-                var containerClient = new BlobContainerClient(containerUri, cred);
-                blobClient = containerClient.GetBlobClient(blobName);
-            }
-
-            log.LogInformation("[AuthZ] Checking authorization for user {user} at location {loc} (mode={mode}) using blob URI {uri}", username, location, mode, blobClient.Uri);
-
-            if (!await blobClient.ExistsAsync())
-            {
-                log.LogWarning("[AuthZ] CSV blob not found: {blob} (uri={uri})", blobClient.Name, blobClient.Uri);
+                log.LogWarning("AzureWebJobsStorage not configured");
                 return false;
             }
-
-            log.LogDebug("[AuthZ] CSV blob exists. Beginning scan.");
+            var containerName = Environment.GetEnvironmentVariable("USER_CSV_CONTAINER") ?? "data";
+            var blobName = Environment.GetEnvironmentVariable("USER_CSV_FILENAME") ?? "user_locations.csv";
+            var blobClient = new BlobContainerClient(connectionString, containerName).GetBlobClient(blobName);
+            if (!await blobClient.ExistsAsync())
+            {
+                log.LogWarning("User CSV blob not found: {blob}", blobName);
+                return false;
+            }
             using var stream = await blobClient.OpenReadAsync();
             using var reader = new StreamReader(stream);
-            int lineNumber = 0;
-            int processed = 0;
             while (!reader.EndOfStream)
             {
                 var line = await reader.ReadLineAsync();
-                lineNumber++;
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 var parts = line.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 2)
-                {
-                    log.LogTrace("[AuthZ] Skipping line {line} insufficient columns", lineNumber);
-                    continue;
-                }
-                processed++;
+                if (parts.Length < 2) continue;
                 if (string.Equals(parts[0], username, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(parts[1], location, StringComparison.OrdinalIgnoreCase))
                 {
-                    log.LogInformation("[AuthZ] Authorized user {user} location {loc} (line {line})", username, location, lineNumber);
                     return true;
                 }
             }
-            log.LogInformation("[AuthZ] No match for user {user} location {loc}. Lines processed={processed}", username, location, processed);
-            return false;
-        }
-        catch (Azure.RequestFailedException rfe)
-        {
-            log.LogError(rfe, "[AuthZ] Storage request failed. Status={status} ErrorCode={code} Uri={uri}", rfe.Status, rfe.ErrorCode, blobClient?.Uri);
-
-
-            // Azure Storage–specific error information
-            Console.WriteLine($"Message: {rfe.Message}");
-            Console.WriteLine($"Status: {rfe.Status}");
-            Console.WriteLine($"ErrorCode: {rfe.ErrorCode}");
-
-
             return false;
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "[AuthZ] Unexpected error validating user authorization: {msg}", ex.Message);
+            log.LogError(ex, "Error validating user authorization");
             return false;
-        }
-    }
-
-    private static void LogJwtClaims(string jwt, ILogger log)
-    {
-        try
-        {
-            var parts = jwt.Split('.');
-            if (parts.Length < 2) return;
-            // Base64Url decode payload
-            var payload = parts[1];
-            var pad = (4 - payload.Length % 4) % 4;
-            if (pad > 0) payload = payload.PadRight(payload.Length + pad, '=');
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload.Replace('-', '+').Replace('_', '/')));
-            using var doc = JsonDocument.Parse(json);
-            string? Get(string k) => doc.RootElement.TryGetProperty(k, out var v) ? v.GetString() : null;
-            log.LogInformation("[AuthZ] MSI token claims: appid={appid} oid={oid} tid={tid}", Get("appid"), Get("oid"), Get("tid"));
-        }
-        catch (Exception ex)
-        {
-            log.LogDebug(ex, "[AuthZ] Failed to parse MSI token claims");
         }
     }
 
@@ -219,44 +137,6 @@ public static class GetEmbedToken
                 log.LogWarning("Power BI service principal credentials not fully configured");
                 return null;
             }
-
-
-/*
-
-            var credentials = new ClientSecretCredential(tenantId, clientId, clientSecret);
-            log.LogInformation($"Received request from credentials: {credentials}");
-
-            var token = await credentials.GetTokenAsync(new TokenRequestContext(new[] { "https://analysis.windows.net/powerbi/api/.default" }));
-            log.LogInformation($"Received request from token: {token.Token}");
-
-            var pbiClient = new PowerBIClient(new Uri("https://api.powerbi.com"), new TokenCredentials(token.Token));
-            log.LogInformation($"Received request from pbiClient: {pbiClient}");
-
-            // WHEREAMI-logic
-            // ...
-            // ...
-
-            // var tokenRequest = new GenerateTokenRequest(
-            //     accessLevel: "View",
-            //     identity: effectiveIdentity
-            // );
-            
-            // log.LogInformation($"Received request from tokenRequest.AccessLevel: {tokenRequest.AccessLevel}");
-
-            // var embedToken = await pbiClient.Reports.GenerateTokenInGroupAsync(new Guid(workspaceId), new Guid(reportId), tokenRequest);
-            var embedToken = await pbiClient.Reports.GenerateTokenInGroupAsync(new Guid(workspaceId), new Guid(reportId), new GenerateTokenRequest(accessLevel: "view"));
-            var report = await pbiClient.Reports.GetReportInGroupAsync(new Guid(workspaceId), new Guid(reportId));
-            
-            log.LogInformation($"Received request from embedToken: {embedToken}");
-
-            return new OkObjectResult(new {
-                Token = embedToken.Token,
-                Expiration = embedToken.Expiration,
-                EmbedURL = report.EmbedUrl
-            });
-
-*/
-
             var scopes = new[] { "https://analysis.windows.net/powerbi/api/.default" };
             var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
             var token = await credential.GetTokenAsync(new Azure.Core.TokenRequestContext(scopes));
@@ -274,6 +154,7 @@ public static class GetEmbedToken
         try
         {
             using var client = new PowerBIClient(new Uri("https://api.powerbi.com/"), new TokenCredentials(powerBiAccessToken, "Bearer"));
+            // Get report to ensure it exists
             var report = await client.Reports.GetReportInGroupAsync(Guid.Parse(request.WorkspaceId), Guid.Parse(request.ReportId));
             var datasetId = report.DatasetId;
 
@@ -293,6 +174,7 @@ public static class GetEmbedToken
                 var exp = tokenResponse.Expiration;
                 if (exp != default)
                 {
+                    // tokenResponse.Expiration is DateTime? already or DateTime; ensure UTC
                     expOffset = DateTime.SpecifyKind(exp, DateTimeKind.Utc);
                 }
             }
