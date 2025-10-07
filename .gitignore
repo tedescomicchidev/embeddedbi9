@@ -4,3 +4,5 @@ __blobstorage__/
 azurite/
 src/.env
 __azurite_db_table__.json
+**/localfiles
+src/identity-client-web-app/appsettings.Development.json
