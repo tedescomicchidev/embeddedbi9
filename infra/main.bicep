@@ -17,7 +17,7 @@ var planName = '${namePrefix}-plan'
 // Key Vault name: allow override; default makes it globally unique & <=24 chars (alphanumeric only)
 @minLength(3)
 @maxLength(24)
-param keyVaultName string = toLower(replace(substring('${namePrefix}kv${uniqueString(subscription().id, resourceGroup().id)}', 0, 24), '-', ''))
+param keyVaultName string = '${namePrefix}-kv'
 var addressSpace = '10.10.0.0/16'
 var appSubnetPrefix = '10.10.1.0/24'
 var privateEndpointsSubnetPrefix = '10.10.2.0/24'
