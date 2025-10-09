@@ -54,6 +54,30 @@
       ]
     },
     {
+      "label": "func host start (whereami-function)",
+      "type": "shell",
+      "command": "func start",
+      "options": {
+        "cwd": "${workspaceFolder}/src/whereami-function"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": {
+            "regexp": ".*",
+            "file": 1,
+            "location": 2,
+            "message": 0
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "^.*Building host.*$",
+            "endsPattern": "^.*Functions:.*WhereAmI.*$"
+          }
+        }
+      ]
+    },
+    {
       "type": "func",
       "dependsOn": "build (functions)",
       "options": {

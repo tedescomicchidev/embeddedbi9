@@ -31,6 +31,20 @@
       "stopAtEntry": false,
       "justMyCode": true
     },
+    // Start only the Functions host task (background). Then use the attach config below.
+    {
+      "name": "Functions: Start Host Task WhereAmI",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "func host start (whereami-function)",
+      "program": "${workspaceFolder}/src/whereami-function/bin/Debug/net8.0/whereami-function.dll",
+      "cwd": "${workspaceFolder}/src/whereami-function",
+      "env": {
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true"
+      },
+      "stopAtEntry": false,
+      "justMyCode": true
+    },
     {
       "name": "Functions: Attach",
       "type": "coreclr",

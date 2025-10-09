@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Azure WhereAmI Functions (whereami-function)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "func: host start (whereami-function)",
+      "program": "/usr/bin/dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/whereami-function/whereami-function.csproj"
+      ],
+      "cwd": "${workspaceFolder}/src/whereami-function",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "Attach to Azure Functions (.NET)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}
