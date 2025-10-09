@@ -16,12 +16,20 @@ public static class WhereAmIFunction
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "whereami")] HttpRequest req,
         ILogger log)
     {
-        // Simulated user location service: always returns Switzerland (CH) and channel 05
-        var payload = new { location = "CH", channel = "05" };
-        log.LogInformation("Returning fixed location for whereami request");
-        return new OkObjectResult(payload)
+        const string userHeader = "X-WhereAmI-User";
+        const string keyHeader = "X-WhereAmI-Key";
+        string user = req.Headers[userHeader];
+        if (string.IsNullOrWhiteSpace(user)) user = "unknown";
+        var providedKey = req.Headers[keyHeader];
+        var expectedKey = Environment.GetEnvironmentVariable("WHEREAMI_API_KEY");
+        if (!string.IsNullOrWhiteSpace(expectedKey) && !string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
         {
-            ContentTypes = { "application/json" }
-        };
+            log.LogWarning("Invalid or missing API key for whereAmI request (user: {user})", user);
+            return new UnauthorizedResult();
+        }
+
+        var payload = new { location = "CH", channel = "05" };
+        log.LogInformation("whereAmI request for user {user} returning {loc}/{channel}", user, payload.location, payload.channel);
+        return new OkObjectResult(payload) { ContentTypes = { "application/json" } };
     }
 }

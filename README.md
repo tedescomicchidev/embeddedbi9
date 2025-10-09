@@ -10,7 +10,7 @@ This repository contains:
 1. User signs into web app (OpenID Connect via Microsoft.Identity.Web).
 2. User enters Workspace Id and Report Id.
 3. Web app server-side calls the internal `whereAmI` service (new Azure Function) to resolve the user's location & channel.
-4. Web app posts to its own `/EmbedToken` endpoint (without client geolocation); server supplies the location to the embed token API.
+4. Web app posts to its own `/EmbedToken` endpoint (no location field in payload); server supplies the location to the embed token API.
 5. Embed token Function validates `Username` + location against `user_locations.csv`.
 6. If authorized, function calls Power BI REST API and returns an embed token.
 7. Web app embeds the report using Power BI JavaScript SDK.
@@ -88,7 +88,29 @@ Response:
 { "location": "CH", "channel": "05" }
 ```
 
-The web app consumes this service during page load (server-side) so no browser geolocation APIs are used, avoiding permission prompts and client tampering of location (still spoofable, but centralized).
+The web app consumes this service during page load (server-side) so no browser geolocation APIs are used. The client never submits a location value, eliminating a user-controlled location field from the request.
+
+##### Security (Simple API Key)
+Requests from the web app to `whereAmI` send:
+
+```
+X-WhereAmI-User: <username>
+X-WhereAmI-Key:  <api key>
+```
+
+Configuration:
+
+- Web app: `WhereAmI:ApiKey` (e.g. appsettings or environment `ASPNETCORE_WhereAmI__ApiKey`)
+- Function: environment variable `WHEREAMI_API_KEY`
+
+If `WHEREAMI_API_KEY` is set, the function compares it to `X-WhereAmI-Key` and returns 401 if missing/mismatched. If not set, the function allows all requests (dev convenience).
+
+For production:
+
+1. Generate a strong random key (at least 32 bytes base64 or hex).
+2. Store in Key Vault / secret manager.
+3. Inject into both app and function via configuration.
+4. Rotate periodically.
 
 ### Debugging (VS Code)
 Launch configurations provided:

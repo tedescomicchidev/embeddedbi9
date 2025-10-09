@@ -4,10 +4,6 @@
 
 <div class="text-center">
     <h1 class="display-4">Power BI Embed Demo</h1>
-    <div class="alert alert-info py-2 small text-start">
-        <strong>Detected Location:</strong> @ViewData["UserLocation"] (Channel @ViewData["UserChannel"])<br />
-        This value is provided by the internal whereAmI service.
-    </div>
     <form id="embedForm" class="mb-3" autocomplete="off">
         <div class="row mb-2">
             <div class="col">
@@ -47,7 +43,7 @@
                     renderError('Failed to acquire embed token', {
                         workspaceId,
                         reportId,
-                        location: '@ViewData["UserLocation"]',
+                        location: '(server-supplied)',
                         httpStatus: resp.status + ' ' + resp.statusText,
                         serverError: data.error || data.message || '(none provided)'
                     });
@@ -59,7 +55,7 @@
                 renderError('Unexpected client-side error while requesting embed token', {
                     workspaceId,
                     reportId,
-                    location: '@ViewData["UserLocation"]',
+                    location: '(server-supplied)',
                     httpStatus: 'N/A (network / client error)',
                     serverError: (err && err.message) ? err.message : String(err)
                 });

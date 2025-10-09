@@ -8,20 +8,24 @@ public class EmbedService : IEmbedService
     private readonly ILogger<EmbedService> _logger;
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _config;
+    private readonly ILocationService _locationService;
 
-    public EmbedService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<EmbedService> logger)
+    public EmbedService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<EmbedService> logger, ILocationService locationService)
     {
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient(nameof(EmbedService));
         _config = config;
+        _locationService = locationService;
         var baseUrl = _config["FunctionApi:BaseUrl"] ?? "https://localhost:7071";
         _httpClient.BaseAddress = new Uri(baseUrl.TrimEnd('/'));
     }
 
-    public Task<EmbedTokenResponse> GetEmbedTokenAsync(string workspaceId, string reportId, string username, IEnumerable<string> groups, string userLocation, CancellationToken cancellationToken = default)
+    public async Task<EmbedTokenResponse> GetEmbedTokenAsync(string workspaceId, string reportId, string username, IEnumerable<string> groups, CancellationToken cancellationToken = default)
     {
-        var req = new EmbedTokenRequest(workspaceId, reportId, username, groups, userLocation);
-        return RequestTokenAsync(req, cancellationToken);
+        // Lazy retrieval: only fetch location when token generation is invoked.
+        var (location, _) = await _locationService.GetUserLocationAsync(username, cancellationToken);
+        var req = new EmbedTokenRequest(workspaceId, reportId, username, groups, location);
+        return await RequestTokenAsync(req, cancellationToken);
     }
 
     public async Task<EmbedTokenResponse> RequestTokenAsync(EmbedTokenRequest request, CancellationToken cancellationToken = default)

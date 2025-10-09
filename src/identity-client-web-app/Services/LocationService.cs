@@ -7,6 +7,7 @@ internal sealed class LocationService : ILocationService
     private readonly HttpClient _httpClient;
     private readonly ILogger<LocationService> _logger;
     private readonly Uri _endpoint = new("http://localhost:7071/api/whereami");
+    private readonly string? _apiKey;
 
     public LocationService(HttpClient httpClient, ILogger<LocationService> logger, IConfiguration config)
     {
@@ -17,13 +18,20 @@ internal sealed class LocationService : ILocationService
         {
             _endpoint = uri;
         }
+        _apiKey = config["WhereAmI:ApiKey"]; // optional
     }
 
-    public async Task<(string location, string channel)> GetUserLocationAsync(CancellationToken cancellationToken = default)
+    public async Task<(string location, string channel)> GetUserLocationAsync(string username, CancellationToken cancellationToken = default)
     {
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, _endpoint);
+            // Send username header and optional API key.
+            req.Headers.Add("X-WhereAmI-User", username);
+            if (!string.IsNullOrWhiteSpace(_apiKey))
+            {
+                req.Headers.Add("X-WhereAmI-Key", _apiKey);
+            }
             using var resp = await _httpClient.SendAsync(req, cancellationToken);
             if (!resp.IsSuccessStatusCode)
             {

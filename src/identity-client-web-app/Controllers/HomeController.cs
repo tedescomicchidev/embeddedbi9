@@ -21,11 +21,8 @@ public class HomeController : Controller
         _locationService = locationService;
     }
 
-    public async Task<IActionResult> Index(CancellationToken cancellationToken)
+    public IActionResult Index()
     {
-        var (loc, channel) = await _locationService.GetUserLocationAsync(cancellationToken);
-        ViewData["UserLocation"] = loc;
-        ViewData["UserChannel"] = channel;
         return View();
     }
 
@@ -54,12 +51,7 @@ public class HomeController : Controller
             .Distinct()
             .ToList();
 
-        // If client didn't supply location (new flow), fill it using service.
-        var location = string.IsNullOrWhiteSpace(request.UserLocation)
-            ? (await _locationService.GetUserLocationAsync(cancellationToken)).location
-            : request.UserLocation;
-
-        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, location, cancellationToken);
+        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, cancellationToken);
         if (!string.IsNullOrEmpty(resp.Error))
         {
             return StatusCode(500, resp);
