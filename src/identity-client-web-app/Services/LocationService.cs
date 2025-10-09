@@ -54,9 +54,12 @@ internal sealed class LocationService : ILocationService
         }
     }
 
-    private sealed record WhereAmIResponse(string? Location, string? Channel)
+    private sealed class WhereAmIResponse
     {
-        public string? location { init => Location = value; } // to accept lower-case JSON
-        public string? channel { init => Channel = value; }
+        // Map lowercase JSON names explicitly; avoids duplicate logical names.
+        [System.Text.Json.Serialization.JsonPropertyName("location")]
+        public string? Location { get; init; }
+        [System.Text.Json.Serialization.JsonPropertyName("channel")]
+        public string? Channel { get; init; }
     }
 }

@@ -20,6 +20,8 @@ public static class WhereAmIFunction
         const string keyHeader = "X-WhereAmI-Key";
         string user = req.Headers[userHeader];
         if (string.IsNullOrWhiteSpace(user)) user = "unknown";
+        log.LogInformation("whereAmI request for user {user}", user);
+        
         var providedKey = req.Headers[keyHeader];
         var expectedKey = Environment.GetEnvironmentVariable("WHEREAMI_API_KEY");
         if (!string.IsNullOrWhiteSpace(expectedKey) && !string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
