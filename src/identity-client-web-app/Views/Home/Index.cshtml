@@ -4,7 +4,11 @@
 
 <div class="text-center">
     <h1 class="display-4">Power BI Embed Demo</h1>
-    <form id="embedForm" class="mb-3">
+    <div class="alert alert-info py-2 small text-start">
+        <strong>Detected Location:</strong> @ViewData["UserLocation"] (Channel @ViewData["UserChannel"])<br />
+        This value is provided by the internal whereAmI service.
+    </div>
+    <form id="embedForm" class="mb-3" autocomplete="off">
         <div class="row mb-2">
             <div class="col">
                 <input class="form-control" name="workspaceId" placeholder="Workspace Id" required />
@@ -21,44 +25,29 @@
 
 <script>
     (function() {
-        const form = document.getElementById('embedForm');
-        const status = document.getElementById('status');
+    const form = document.getElementById('embedForm');
+    const status = document.getElementById('status');
         // Current authenticated user (server injected). Falls back to Anonymous.
         const currentUser = '@(User?.Identity?.IsAuthenticated == true ? User.Identity.Name : "Anonymous")';
         // Note: Username and groups are no longer sent from the client. They are derived server-side
         // from authenticated user claims for integrity; only workspace/report/location are posted.
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            status.textContent = 'Requesting geolocation...';
-            let location = 'unknown';
-            try {
-                const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
-                const { latitude, longitude } = pos.coords;
-                const countryCode = await reverseGeocodeCountryCode(latitude, longitude);
-                if (countryCode) {
-                    location = countryCode;
-                } else {
-                    location = 'unknown';
-                }
-            } catch { status.textContent = 'Geolocation denied, using unknown'; }
+            // Location now resolved server-side via whereAmI service; client leaves location blank.
             const fd = new FormData(form);
             const workspaceId = fd.get('workspaceId');
             const reportId = fd.get('reportId');
 
             status.textContent = 'Requesting embed token...';
             try {
-                const body = {
-                    workspaceId,
-                    reportId,
-                    userLocation: location
-                };
+                const body = { workspaceId, reportId };
                 const resp = await fetch('/EmbedToken', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 const data = await resp.json();
                 if (!resp.ok || data.error) {
                     renderError('Failed to acquire embed token', {
                         workspaceId,
                         reportId,
-                        location,
+                        location: '@ViewData["UserLocation"]',
                         httpStatus: resp.status + ' ' + resp.statusText,
                         serverError: data.error || data.message || '(none provided)'
                     });
@@ -70,7 +59,7 @@
                 renderError('Unexpected client-side error while requesting embed token', {
                     workspaceId,
                     reportId,
-                    location,
+                    location: '@ViewData["UserLocation"]',
                     httpStatus: 'N/A (network / client error)',
                     serverError: (err && err.message) ? err.message : String(err)
                 });
@@ -91,20 +80,7 @@
             powerbi.reset(container);
             powerbi.embed(container, config);
         }
-        async function reverseGeocodeCountryCode(lat, lon) {
-            try {
-                const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}` , {
-                    headers: { 'Accept': 'application/json' }
-                });
-                if (!resp.ok) return null;
-                const data = await resp.json();
-                // Nominatim may include ISO codes under address components
-                const iso2 = data?.address?.country_code; // lower-case iso2
-                return iso2 ? iso2.toUpperCase() : null;
-            } catch {
-                return null;
-            }
-        }
+        // Removed browser geolocation logic – now using backend service.
 
         /**
          * Renders a visually rich error panel with diagnostic details for user support.

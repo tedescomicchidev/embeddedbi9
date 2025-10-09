@@ -36,8 +36,9 @@ public class Program
             options.Filters.Add(new AuthorizeFilter(policy));
         }).AddMicrosoftIdentityUI();
 
-        builder.Services.AddHttpClient();
-        builder.Services.AddScoped<IEmbedService, EmbedService>();
+    builder.Services.AddHttpClient();
+    builder.Services.AddScoped<IEmbedService, EmbedService>();
+    builder.Services.AddScoped<ILocationService, LocationService>();
 
         var app = builder.Build();
 

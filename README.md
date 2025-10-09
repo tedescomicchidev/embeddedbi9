@@ -8,17 +8,19 @@ This repository contains:
 
 ### High-Level Flow
 1. User signs into web app (OpenID Connect via Microsoft.Identity.Web).
-2. User enters Workspace Id and Report Id; browser captures approximate geolocation (or 'unknown').
-3. Web app posts to its own `/EmbedToken` endpoint which calls the Azure Function.
-4. Function validates `Username` + `UserLocation` against `user_locations.csv` in the `data` container.
-5. If authorized, function uses service principal credentials to call Power BI REST API and generate an embed token.
-6. Web app embeds the report using Power BI JavaScript SDK.
+2. User enters Workspace Id and Report Id.
+3. Web app server-side calls the internal `whereAmI` service (new Azure Function) to resolve the user's location & channel.
+4. Web app posts to its own `/EmbedToken` endpoint (without client geolocation); server supplies the location to the embed token API.
+5. Embed token Function validates `Username` + location against `user_locations.csv`.
+6. If authorized, function calls Power BI REST API and returns an embed token.
+7. Web app embeds the report using Power BI JavaScript SDK.
 
 ### Projects
 | Project | Purpose |
 |---------|---------|
 | `src/identity-client-web-app` | MVC app + auth + embedding UI |
 | `src/identity-client-api` | Azure Function generating embed tokens |
+| `src/whereami-function` | Azure Function (simulation) returning constant location/channel |
 | `infra/` | Bicep templates (App Service, Function, Storage, Key Vault, App Insights) |
 
 ### Prerequisites
@@ -59,9 +61,14 @@ export PBI_TENANT_ID=YOUR_TENANT_ID
 export PBI_CLIENT_ID=YOUR_CLIENT_ID
 export PBI_CLIENT_SECRET=YOUR_CLIENT_SECRET
 ```
-5. Run function:
+5. Run functions:
 ```bash
-cd src/identity-client-api
+# Terminal 1: whereAmI service (returns CH/05)
+cd src/whereami-function
+func start
+
+# Terminal 2: embed token function
+cd ../identity-client-api
 func start
 ```
 6. Run web app:
@@ -70,6 +77,18 @@ cd ../identity-client-web-app
 dotnet run
 ```
 7. Navigate to https://localhost:5001 (or shown port), sign in, enter Workspace & Report Ids, embed.
+
+#### whereAmI Service
+The `whereAmI` Azure Function provides a simple HTTP GET endpoint:
+
+`GET http://localhost:7071/api/whereami`
+
+Response:
+```json
+{ "location": "CH", "channel": "05" }
+```
+
+The web app consumes this service during page load (server-side) so no browser geolocation APIs are used, avoiding permission prompts and client tampering of location (still spoofable, but centralized).
 
 ### Debugging (VS Code)
 Launch configurations provided:

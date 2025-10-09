@@ -12,15 +12,20 @@ public class HomeController : Controller
 {
     private readonly ILogger<HomeController> _logger;
     private readonly IEmbedService _embedService;
+    private readonly ILocationService _locationService;
 
-    public HomeController(ILogger<HomeController> logger, IEmbedService embedService, IConfiguration configuration)
+    public HomeController(ILogger<HomeController> logger, IEmbedService embedService, ILocationService locationService, IConfiguration configuration)
     {
         _logger = logger;
         _embedService = embedService;
+        _locationService = locationService;
     }
 
-    public IActionResult Index()
+    public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
+        var (loc, channel) = await _locationService.GetUserLocationAsync(cancellationToken);
+        ViewData["UserLocation"] = loc;
+        ViewData["UserChannel"] = channel;
         return View();
     }
 
@@ -49,7 +54,12 @@ public class HomeController : Controller
             .Distinct()
             .ToList();
 
-        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, request.UserLocation, cancellationToken);
+        // If client didn't supply location (new flow), fill it using service.
+        var location = string.IsNullOrWhiteSpace(request.UserLocation)
+            ? (await _locationService.GetUserLocationAsync(cancellationToken)).location
+            : request.UserLocation;
+
+        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, location, cancellationToken);
         if (!string.IsNullOrEmpty(resp.Error))
         {
             return StatusCode(500, resp);
