@@ -23,6 +23,8 @@
     (function() {
         const form = document.getElementById('embedForm');
         const status = document.getElementById('status');
+        // Current authenticated user (server injected). Falls back to Anonymous.
+        const currentUser = '@(User?.Identity?.IsAuthenticated == true ? User.Identity.Name : "Anonymous")';
         // Note: Username and groups are no longer sent from the client. They are derived server-side
         // from authenticated user claims for integrity; only workspace/report/location are posted.
         form.addEventListener('submit', async (e) => {
@@ -42,7 +44,7 @@
                     renderError('Failed to acquire embed token', {
                         workspaceId,
                         reportId,
-                        location: location + ' (channel ' + channel + ')',
+                        location,
                         httpStatus: resp.status + ' ' + resp.statusText,
                         serverError: data.error || data.message || '(none provided)'
                     });
@@ -54,7 +56,7 @@
                 renderError('Unexpected client-side error while requesting embed token', {
                     workspaceId,
                     reportId,
-                    location: 'UNKNOWN',
+                    location,
                     httpStatus: 'N/A (network / client error)',
                     serverError: (err && err.message) ? err.message : String(err)
                 });
@@ -75,7 +77,20 @@
             powerbi.reset(container);
             powerbi.embed(container, config);
         }
-        // reverseGeocode function removed; location now resolved server-side via whereAmI API.
+        async function reverseGeocodeCountryCode(lat, lon) {
+            try {
+                const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}` , {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                // Nominatim may include ISO codes under address components
+                const iso2 = data?.address?.country_code; // lower-case iso2
+                return iso2 ? iso2.toUpperCase() : null;
+            } catch {
+                return null;
+            }
+        }
 
         /**
          * Renders a visually rich error panel with diagnostic details for user support.
