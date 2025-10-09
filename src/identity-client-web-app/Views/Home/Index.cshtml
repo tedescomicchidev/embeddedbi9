@@ -23,6 +23,8 @@
     (function() {
         const form = document.getElementById('embedForm');
         const status = document.getElementById('status');
+        // Current authenticated user (server injected). Falls back to Anonymous.
+        const currentUser = '@(User?.Identity?.IsAuthenticated == true ? User.Identity.Name : "Anonymous")';
         // Note: Username and groups are no longer sent from the client. They are derived server-side
         // from authenticated user claims for integrity; only workspace/report/location are posted.
         form.addEventListener('submit', async (e) => {
@@ -53,13 +55,25 @@
                 const resp = await fetch('/EmbedToken', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 const data = await resp.json();
                 if (!resp.ok || data.error) {
-                    status.textContent = 'Error: ' + (data.error || resp.statusText);
+                    renderError('Failed to acquire embed token', {
+                        workspaceId,
+                        reportId,
+                        location,
+                        httpStatus: resp.status + ' ' + resp.statusText,
+                        serverError: data.error || data.message || '(none provided)'
+                    });
                     return;
                 }
                 status.textContent = 'Token acquired, embedding...';
                 embedReport(workspaceId, reportId, data.embedToken);
             } catch (err) {
-                status.textContent = 'Request failed: ' + err;
+                renderError('Unexpected client-side error while requesting embed token', {
+                    workspaceId,
+                    reportId,
+                    location,
+                    httpStatus: 'N/A (network / client error)',
+                    serverError: (err && err.message) ? err.message : String(err)
+                });
             }
         });
 
@@ -90,6 +104,56 @@
             } catch {
                 return null;
             }
+        }
+
+        /**
+         * Renders a visually rich error panel with diagnostic details for user support.
+         * Nothing sensitive (like tokens) is displayed.
+         */
+        function renderError(message, { workspaceId, reportId, location, httpStatus, serverError }) {
+            const timestamp = new Date().toISOString();
+            status.innerHTML = `
+                <div class="alert alert-danger" role="alert" style="white-space:normal;text-align:left">
+                    <div class="d-flex align-items-start">
+                        <div style="font-size:1.5rem;line-height:1;margin-right:.5rem">❌</div>
+                        <div style="flex:1">
+                            <strong>${escapeHtml(message)}</strong>
+                            <div class="small mt-2">
+                                <details open>
+                                    <summary class="fw-semibold">Details</summary>
+                                    <ul class="list-unstyled mb-2 mt-2" style="max-width:480px">
+                                        <li><strong>User:</strong> ${escapeHtml(currentUser)}</li>
+                                        <li><strong>Workspace Id:</strong> ${escapeHtml(workspaceId || '(none)')}</li>
+                                        <li><strong>Report Id:</strong> ${escapeHtml(reportId || '(none)')}</li>
+                                        <li><strong>User Location (ISO2):</strong> ${escapeHtml(location || 'unknown')}</li>
+                                        <li><strong>HTTP Status:</strong> ${escapeHtml(httpStatus || 'Unknown')}</li>
+                                        <li><strong>Server/Error Message:</strong> ${escapeHtml(serverError || 'Unknown')}</li>
+                                        <li><strong>Timestamp (UTC):</strong> ${escapeHtml(timestamp)}</li>
+                                    </ul>
+                                </details>
+                                <div>If this persists, capture the above details and contact support.</div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="retryEmbedBtn">Retry</button>
+                        </div>
+                    </div>
+                </div>`;
+            const retry = document.getElementById('retryEmbedBtn');
+            if (retry) {
+                retry.addEventListener('click', () => {
+                    status.textContent = 'Retry initiated...';
+                    form.requestSubmit();
+                });
+            }
+        }
+
+        // Basic HTML escaping to avoid accidental injection from dynamic values.
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
     })();
 </script>
