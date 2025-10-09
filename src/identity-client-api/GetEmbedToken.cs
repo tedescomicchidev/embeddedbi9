@@ -1,33 +1,33 @@
-﻿#nullable enable
+﻿﻿#nullable enable
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Azure.Storage.Blobs;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.WebJobs;
-using Microsoft.Azure.WebJobs.Extensions.Http;
-using Microsoft.AspNetCore.Http;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.PowerBI.Api;
 using Microsoft.PowerBI.Api.Models;
-using Microsoft.Rest;
+using Microsoft.Rest; // required for TokenCredentials
 using identity_client_api.Models;
 
 namespace identity_client_api;
 
-public static class GetEmbedToken
+public class GetEmbedToken
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly ILogger<GetEmbedToken> _logger;
+    public GetEmbedToken(ILogger<GetEmbedToken> logger) => _logger = logger;
 
-    [FunctionName("GetEmbedToken")]
-    public static async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "generateEmbedToken")] HttpRequest req,
-        ILogger log)
+    [Function("GetEmbedToken")]
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "generateEmbedToken")] HttpRequestData req)
     {
         try
         {
@@ -35,12 +35,12 @@ public static class GetEmbedToken
             var body = await reader.ReadToEndAsync();
             if (string.IsNullOrWhiteSpace(body))
             {
-                return BadRequest("Empty body");
+                return CreateResponse(req, HttpStatusCode.BadRequest, new EmbedTokenResponse(null, null, "Empty body"));
             }
             var request = JsonSerializer.Deserialize<EmbedTokenRequest>(body, JsonOptions);
             if (request is null)
             {
-                return BadRequest("Invalid JSON");
+                return CreateResponse(req, HttpStatusCode.BadRequest, new EmbedTokenResponse(null, null, "Invalid JSON"));
             }
 
             var missing = new List<string>();
@@ -50,39 +50,43 @@ public static class GetEmbedToken
             if (string.IsNullOrWhiteSpace(request.UserLocation)) missing.Add(nameof(request.UserLocation));
             if (missing.Any())
             {
-                return BadRequest($"Missing required fields: {string.Join(", ", missing)}");
+                return CreateResponse(req, HttpStatusCode.BadRequest, new EmbedTokenResponse(null, null, $"Missing required fields: {string.Join(", ", missing)}"));
             }
 
-            // Validate user + location via CSV stored in blob (Azurite/local or real storage)
-            bool authorized = await IsAuthorizedAsync(request.Username, request.UserLocation, log);
+            bool authorized = await IsAuthorizedAsync(request.Username, request.UserLocation, _logger);
             if (!authorized)
             {
-                return new ObjectResult(new EmbedTokenResponse(null, null, "User and location not authorized")) { StatusCode = (int)HttpStatusCode.Forbidden };
+                return CreateResponse(req, HttpStatusCode.Forbidden, new EmbedTokenResponse(null, null, "User and location not authorized"));
             }
 
-            // Acquire Power BI access token using service principal
-            var pbiToken = await AcquirePowerBiAccessTokenAsync(log);
+            var pbiToken = await AcquirePowerBiAccessTokenAsync(_logger);
             if (string.IsNullOrEmpty(pbiToken))
             {
-                return new ObjectResult(new EmbedTokenResponse(null, null, "Failed to acquire Power BI access token")) { StatusCode = 500 };
+                return CreateResponse(req, HttpStatusCode.InternalServerError, new EmbedTokenResponse(null, null, "Failed to acquire Power BI access token"));
             }
 
-            // Generate embed token
-            var embedResponse = await GenerateEmbedTokenAsync(pbiToken, request, log);
+            var embedResponse = await GenerateEmbedTokenAsync(pbiToken, request, _logger);
             if (embedResponse.EmbedToken == null)
             {
-                return new ObjectResult(embedResponse) { StatusCode = 500 };
+                return CreateResponse(req, HttpStatusCode.InternalServerError, embedResponse);
             }
-            return new OkObjectResult(embedResponse);
+            return CreateResponse(req, HttpStatusCode.OK, embedResponse);
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Error generating embed token");
-            return new ObjectResult(new EmbedTokenResponse(null, null, ex.Message)) { StatusCode = 500 };
+            _logger.LogError(ex, "Error generating embed token");
+            return CreateResponse(req, HttpStatusCode.InternalServerError, new EmbedTokenResponse(null, null, ex.Message));
         }
     }
 
-    private static IActionResult BadRequest(string message) => new BadRequestObjectResult(new EmbedTokenResponse(null, null, message));
+    private static HttpResponseData CreateResponse(HttpRequestData req, HttpStatusCode status, EmbedTokenResponse payload)
+    {
+        var response = req.CreateResponse(status);
+        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        response.Headers.Add("Content-Type", "application/json; charset=utf-8");
+        response.WriteString(json, Encoding.UTF8);
+        return response;
+    }
 
     private static async Task<bool> IsAuthorizedAsync(string username, string location, ILogger log)
     {

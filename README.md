@@ -125,9 +125,46 @@ If the authenticated user's username and the location string provided from the b
 - Replace plain secret with Key Vault reference + managed identity.
 - Support user groups filtering for RLS datasets.
 
+### New WhereAmI Function (Static Stub)
+A lightweight Azure Function (`src/whereami-function`) was added to simulate a geolocation/channel service consumed by the web app's `WhereAmILocationService`.
+
+- Endpoint: `GET /api/whereAmI`
+- Returns static JSON: `{ "location": "CH", "channel": "05" }` (Switzerland + channel 05)
+- Function name: `WhereAmI`
+- Authorization: Anonymous (dev only). Secure or move behind APIM / auth for production scenarios.
+
+#### Run Locally
+```bash
+cd src/whereami-function
+func start
+```
+Then call:
+```bash
+curl http://localhost:7071/api/whereAmI
+```
+Expected response:
+```json
+{"location":"CH","channel":"05"}
+```
+
+#### Integration
+Set (or keep) the web app configuration key `WhereAmI:BaseUrl` to the base URL of this function host (e.g. `http://localhost:7071/api` or just `http://localhost:7071`). The `WhereAmILocationService` internally calls `<BaseUrl>/whereAmI`.
+
+If you deploy this function separately, expose its public URL and update the configuration accordingly.
+
+---
+
 ### Original Scaffolding Commands (for reference)
 ```
 dotnet new mvc -n identity-client-web-app --use-program-main
 func init identity-client-api --worker-runtime dotnet --target-framework net8.0
 func new --name GetEmbedToken --template "HTTP trigger" --authlevel function
 ```
+
+### Isolated Worker Migration
+`identity-client-api` has been migrated from the in-process (`FUNCTIONS_WORKER_RUNTIME=dotnet`) model to the isolated worker model (`dotnet-isolated`). Key differences:
+- Added `Program.cs` bootstrapping the Functions host.
+- Replaced `Microsoft.NET.Sdk.Functions` with `Microsoft.Azure.Functions.Worker` packages and updated the function attribute to `[Function]` with `HttpRequestData` / `HttpResponseData`.
+- Updated `local.settings.json` to set `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated` and removed hard-coded secrets (placeholders now). Provide real values via environment variables or User Secrets.
+
+No external behavior changes to the `/api/generateEmbedToken` endpoint are intended.
