@@ -4,5 +4,5 @@ namespace identity_client_web_app.Models;
 public record EmbedTokenClientRequest(
     string WorkspaceId,
     string ReportId,
-    string UserLocation
+    string? UserLocation // optional now; server will override using whereAmI API
 );

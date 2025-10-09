@@ -38,6 +38,7 @@ public class Program
 
         builder.Services.AddHttpClient();
         builder.Services.AddScoped<IEmbedService, EmbedService>();
+    builder.Services.AddHttpClient<ILocationService, WhereAmILocationService>();
 
         var app = builder.Build();
 

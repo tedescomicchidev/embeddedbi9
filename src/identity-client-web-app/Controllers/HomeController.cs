@@ -12,11 +12,13 @@ public class HomeController : Controller
 {
     private readonly ILogger<HomeController> _logger;
     private readonly IEmbedService _embedService;
+    private readonly ILocationService _locationService;
 
-    public HomeController(ILogger<HomeController> logger, IEmbedService embedService, IConfiguration configuration)
+    public HomeController(ILogger<HomeController> logger, IEmbedService embedService, ILocationService locationService, IConfiguration configuration)
     {
         _logger = logger;
         _embedService = embedService;
+        _locationService = locationService;
     }
 
     public IActionResult Index()
@@ -49,12 +51,16 @@ public class HomeController : Controller
             .Distinct()
             .ToList();
 
-        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, request.UserLocation, cancellationToken);
+        // Retrieve location & channel from whereAmI API (ignoring any client-provided location for integrity)
+        var (resolvedLocation, channel) = await _locationService.GetLocationAsync(HttpContext, cancellationToken);
+
+        var resp = await _embedService.GetEmbedTokenAsync(request.WorkspaceId, request.ReportId, username, groupClaims, resolvedLocation, cancellationToken);
+        // Attach extra metadata for front-end display (channel & location) by shaping an anonymous object if success or failure
         if (!string.IsNullOrEmpty(resp.Error))
         {
-            return StatusCode(500, resp);
+            return StatusCode(500, new { resp.EmbedToken, resp.Expiration, resp.Error, ReportId = request.ReportId, WorkspaceId = request.WorkspaceId, userLocation = resolvedLocation, channel });
         }
-        return Ok(resp);
+        return Ok(new { resp.EmbedToken, resp.Expiration, resp.Error, ReportId = request.ReportId, WorkspaceId = request.WorkspaceId, userLocation = resolvedLocation, channel });
     }
 
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
